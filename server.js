@@ -107,14 +107,20 @@ app.get('/api/reviews/:maps_id', async (req, res) => {
       const establishmentResult = await client.query('SELECT id FROM establishments WHERE maps_id = $1', [maps_id]);
 
       if (establishmentResult.rows.length === 0) {
-          // Se não encontrarmos um estabelecimento, retorne um erro ou uma resposta vazia
+         
           return res.status(404).json({ success: false, message: 'Estabelecimento não encontrado.' });
       }
 
       const establishmentId = establishmentResult.rows[0].id;
 
-      // Agora, com o establishment_id, busque as avaliações
-      const reviewsResult = await client.query('SELECT * FROM reviews WHERE establishment_id = $1', [establishmentId]);
+      // Agora, com o establishment_id, busca as avaliações
+      const reviewsResult = await client.query(`
+        SELECT reviews.*, users.username 
+        FROM reviews 
+        JOIN users ON reviews.user_id = users.id 
+        WHERE reviews.establishment_id = $1
+      `, [establishmentId]);
+      console.log(reviewsResult.rows)
       
       res.json({ success: true, reviews: reviewsResult.rows });
   } catch (error) {
