@@ -24,7 +24,7 @@ const app = express();
 app.use(bodyParser.json());
 app.use(cors());
 
-app.post('/api/register', async (req, res) => {
+/*app.post('/api/register', async (req, res) => {
   const { username, email, password } = req.body;
   
   const hashedPassword = await bcrypt.hash(password, 10);
@@ -38,14 +38,34 @@ app.post('/api/register', async (req, res) => {
     
     res.status(500).json({ success: false, message: 'Erro ao registrar.' });
   }
+});*/
+
+app.post('/api/register', async (req, res) => {
+  const { username, email, password } = req.body;
+  
+  const hashedPassword = await bcrypt.hash(password, 10);
+
+  try {
+    const result = await client.query(
+      'INSERT INTO users (username, email, password) VALUES ($1, $2, $3) RETURNING id', 
+      [username, email, hashedPassword]
+    );
+    const userId = result.rows[0].id;
+    const token = jwt.sign({ id: userId }, 'secreto', { expiresIn: '1h' });
+    
+    res.json({ success: true, token, userId }); // Adicionando userId na resposta
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Erro ao registrar.' });
+  }
 });
+
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
 
-app.post('/api/login', async (req, res) => {
+/*app.post('/api/login', async (req, res) => {
   const { email, password } = req.body;
 
   try {
@@ -72,6 +92,39 @@ app.post('/api/login', async (req, res) => {
 
     res.json({ success: true, token });
 
+  } catch (error) {
+    console.error('Erro ao fazer login:', error);
+    res.status(500).json({ success: false, message: 'Erro ao fazer login. Tente novamente mais tarde.' });
+  }
+});*/
+
+app.post('/api/login', async (req, res) => {
+  const { email, password } = req.body;
+
+  try {
+    // Consulta o usuário com base no e-mail fornecido
+    const result = await client.query('SELECT id, password FROM users WHERE email = $1', [email]);
+
+    const user = result.rows[0];
+
+    if (!user) {
+      // Se nenhum usuário for encontrado
+      return res.status(400).json({ success: false, message: 'E-mail ou senha estão incorretos.' });
+    }
+
+    // Compara a senha fornecida com a senha armazenada no banco de dados
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+
+    if (isPasswordValid) {
+      // Se a senha for válida, cria o token
+      const token = jwt.sign({ id: user.id }, 'secreto', { expiresIn: '1h' });
+      
+      // Retorna o token e o userId
+      res.json({ success: true, token, userId: user.id });
+    } else {
+      // Se a senha não for válida
+      return res.status(400).json({ success: false, message: 'E-mail ou senha estão incorretos.' });
+    }
   } catch (error) {
     console.error('Erro ao fazer login:', error);
     res.status(500).json({ success: false, message: 'Erro ao fazer login. Tente novamente mais tarde.' });
@@ -222,5 +275,61 @@ app.post('/api/ensure-establishment', async (req, res) => {
   } catch (error) {
       console.error('Erro ao cadastrar/verificar estabelecimento:', error);
       res.status(500).json({ success: false, message: 'Erro ao cadastrar/verificar estabelecimento.' });
+  }
+});
+
+app.delete('/api/review/:reviewId', verifyToken, async (req, res) => {
+  const reviewId = req.params.reviewId;
+  const userId = req.userId;
+
+  try {
+    const reviewResult = await client.query('SELECT * FROM reviews WHERE id = $1', [reviewId]);
+
+    if (reviewResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Avaliação não encontrada.' });
+    }
+
+    if (reviewResult.rows[0].user_id !== userId) {
+      return res.status(403).json({ success: false, message: 'Você não tem permissão para excluir esta avaliação.' });
+    }
+
+    await client.query('DELETE FROM reviews WHERE id = $1', [reviewId]);
+    res.json({ success: true, message: 'Avaliação excluída com sucesso.' });
+  } catch (error) {
+    console.error('Erro ao excluir avaliação:', error);
+    res.status(500).json({ success: false, message: 'Erro ao excluir avaliação.' });
+  }
+});
+
+// Atualizar uma avaliação específica
+app.put('/api/review/:id', verifyToken, async (req, res) => {
+  try {
+    const reviewId = parseInt(req.params.id);
+    const { rating, comment } = req.body;
+    const userId = req.userId;
+
+    // Primeiro, verifique se a avaliação pertence ao usuário
+    const reviewResult = await client.query('SELECT * FROM reviews WHERE id = $1', [reviewId]);
+
+    if (reviewResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Avaliação não encontrada.' });
+    }
+
+    const review = reviewResult.rows[0];
+
+    if (review.user_id !== userId) {
+      return res.status(403).json({ success: false, message: 'Você não tem permissão para editar esta avaliação.' });
+    }
+
+    // Agora, atualize a avaliação
+    await client.query(
+      'UPDATE reviews SET rating = $1, comment = $2 WHERE id = $3',
+      [rating, comment, reviewId]
+    );
+
+    res.json({ success: true, message: 'Avaliação atualizada com sucesso.' });
+  } catch (error) {
+    console.error('Erro ao atualizar avaliação:', error);
+    res.status(500).json({ success: false, message: 'Erro ao atualizar avaliação.' });
   }
 });
