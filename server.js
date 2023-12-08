@@ -39,8 +39,92 @@ app.use(cors());
     res.status(500).json({ success: false, message: 'Erro ao registrar.' });
   }
 });*/
+const nodemailer = require('nodemailer');
+
+function sendVerificationEmail(userEmail, token) {
+  const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: 'plataformasafespot@gmail.com',
+      pass: 'nojz mbca qzjg mxhg'
+    }
+  });
+
+  const mailOptions = {
+    from: 'plataformasafespot@gmail.com', 
+    to: userEmail, 
+    subject: 'Verifique seu e-mail para o SafeSpot',
+
+    //html: `<p>Por favor, clique no link para verificar seu e-mail: <a href="http://localhost:3001/verify-email/${token}">Verificar E-mail</a></p>`
+    html: `<p>Por favor, clique no link para verificar seu e-mail: <a href="https://appsafespot-fa1a6d341394.herokuapp.com/verify-email/${token}">Verificar E-mail</a></p>`
+  };
+
+  transporter.sendMail(mailOptions, (error, info) => {
+    if (error) {
+      console.error('Erro ao enviar e-mail:', error);
+    } else {
+      console.log('E-mail enviado: ' + info.response);
+    }
+  });
+}
+
+
+/*app.get('/api/verify-email/:token', async (req, res) => {
+  try {
+    const { token } = req.params;
+    const decoded = jwt.verify(token, 'seuSegredo');
+    await client.query('UPDATE users SET is_verified = true WHERE email = $1', [decoded.email]);
+    
+    res.redirect('http://localhost:3001/login?verified=true');
+    //res.redirect('https://https://appsafespot-fa1a6d341394.herokuapp.com/login?verified=true'); // Redireciona para a página de login
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Erro ao verificar e-mail.' });
+  }
+});*/
+
+app.get('/api/verify-email/:token', async (req, res) => {
+  try {
+    const { token } = req.params;
+    const decoded = jwt.verify(token, 'seuSegredo');
+    await client.query('UPDATE users SET is_verified = true WHERE email = $1', [decoded.email]);
+    
+    // Retorna uma resposta JSON indicando sucesso
+    res.json({ success: true, message: 'Seu e-mail foi verificado com sucesso!' });
+  } catch (error) {
+    // Retorna uma resposta JSON indicando falha
+    res.status(500).json({ success: false, message: 'Erro ao verificar e-mail.' });
+  }
+});
 
 app.post('/api/register', async (req, res) => {
+  const { username, email, password } = req.body;
+  const hashedPassword = await bcrypt.hash(password, 10);
+
+  // Token de verificação para o e-mail
+  const verificationToken = jwt.sign({ email }, 'seuSegredo', { expiresIn: '24h' });
+  console.log(verificationToken);
+  try {
+    const userResult = await client.query(
+      'INSERT INTO users (username, email, password, verification_token) VALUES ($1, $2, $3, $4) RETURNING id', 
+      [username, email, hashedPassword, verificationToken]
+    );
+
+    // O usuário é registrado, agora envia o e-mail de verificação
+    sendVerificationEmail(email, verificationToken);
+
+    // Cria o token JWT para autenticação
+    const userId = userResult.rows[0].id;
+    const authToken = jwt.sign({ id: userId }, 'secreto', { expiresIn: '1h' });
+
+    // Retorna o token JWT para autenticação imediata (opcional)
+    res.json({ success: true, token: authToken, userId, message: 'Registro concluído. Verifique seu e-mail.' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Erro ao registrar.' });
+  }
+});
+
+
+/*app.post('/api/register', async (req, res) => {
   const { username, email, password } = req.body;
   
   const hashedPassword = await bcrypt.hash(password, 10);
@@ -57,7 +141,7 @@ app.post('/api/register', async (req, res) => {
   } catch (error) {
     res.status(500).json({ success: false, message: 'Erro ao registrar.' });
   }
-});
+});*/
 
 
 const PORT = process.env.PORT || 3000;
@@ -103,6 +187,45 @@ app.post('/api/login', async (req, res) => {
 
   try {
     // Consulta o usuário com base no e-mail fornecido
+    const result = await client.query('SELECT id, password, is_verified FROM users WHERE email = $1', [email]);
+
+    const user = result.rows[0];
+
+    if (!user) {
+      // Se nenhum usuário for encontrado
+      return res.status(400).json({ success: false, message: 'E-mail ou senha estão incorretos.' });
+    }
+
+    // Verifica se o usuário está verificado
+    if (!user.is_verified) {
+      return res.status(401).json({ success: false, message: 'E-mail não verificado. Por favor, verifique seu e-mail.' });
+    }
+
+    // Compara a senha fornecida com a senha armazenada no banco de dados
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+
+    if (isPasswordValid) {
+      // Se a senha for válida, cria o token
+      const token = jwt.sign({ id: user.id }, 'secreto', { expiresIn: '1h' });
+      
+      // Retorna o token e o userId
+      res.json({ success: true, token, userId: user.id });
+    } else {
+      // Se a senha não for válida
+      return res.status(400).json({ success: false, message: 'E-mail ou senha estão incorretos.' });
+    }
+  } catch (error) {
+    console.error('Erro ao fazer login:', error);
+    res.status(500).json({ success: false, message: 'Erro ao fazer login. Tente novamente mais tarde.' });
+  }
+});
+
+
+/*app.post('/api/login', async (req, res) => {
+  const { email, password } = req.body;
+
+  try {
+    // Consulta o usuário com base no e-mail fornecido
     const result = await client.query('SELECT id, password FROM users WHERE email = $1', [email]);
 
     const user = result.rows[0];
@@ -129,7 +252,7 @@ app.post('/api/login', async (req, res) => {
     console.error('Erro ao fazer login:', error);
     res.status(500).json({ success: false, message: 'Erro ao fazer login. Tente novamente mais tarde.' });
   }
-});
+});*/
 
 app.get('/api/establishment/:maps_id', async (req, res) => {
   try {
